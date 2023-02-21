@@ -63,6 +63,7 @@ class MRISliceDataset(Dataset):
         num_cols: Optional[Tuple[int]] = None,
         mask_root: Union[str, Path, os.PathLike] = None,
         consecutive_slices: int = 1,
+        self_supervising_masks: bool = False,
     ):
         """
         Parameters
@@ -86,6 +87,7 @@ class MRISliceDataset(Dataset):
         mask_root: Path to stored masks.
         consecutive_slices: An int (>0) that determine the amount of consecutive slices of the file to be loaded at
             the same time. Defaults to 1, loading single slices.
+        self_supervising_masks: Toggle the flag to enable loading SSDU masks.
         """
         if challenge not in ("singlecoil", "multicoil", "segmentation"):
             raise ValueError('challenge should be either "singlecoil" or "multicoil" or "segmentation"')
@@ -156,6 +158,8 @@ class MRISliceDataset(Dataset):
         self.consecutive_slices = consecutive_slices
         if self.consecutive_slices < 1:
             raise ValueError("consecutive_slices value is out of range, must be > 0.")
+
+        self.self_supervising_masks = self_supervising_masks
 
     @staticmethod
     def _retrieve_metadata(fname):
@@ -268,6 +272,15 @@ class MRISliceDataset(Dataset):
             elif self.mask_root is not None and self.mask_root != "None":
                 with h5py.File(Path(self.mask_root) / fname.name, "r") as mf:
                     mask = np.asarray(self.get_consecutive_slices(mf, "mask", dataslice))
+                    if self.self_supervising_masks:
+                        loss_mask = np.asarray(self.get_consecutive_slices(mf, "loss_mask", dataslice))
+                        trn_mask = np.asarray(self.get_consecutive_slices(mf, "trn_mask", dataslice))
+
+                        # TODO: handle this properly on the precomputation of the masks
+                        trn_mask = np.abs(trn_mask)
+                        loss_mask = np.abs(loss_mask)
+
+                        mask = [mask, trn_mask, loss_mask]
             else:
                 mask = None
 
@@ -278,7 +291,7 @@ class MRISliceDataset(Dataset):
             if "reconstruction_sense" in hf:
                 self.recons_key = "reconstruction_sense"
 
-            target = self.get_consecutive_slices(hf, self.recons_key, dataslice) if self.recons_key in hf else None
+            target = self.get_consecutive_slices(hf, self.recons_key, dataslice) if self.recons_key in hf else np.array([])
 
             attrs = dict(hf.attrs)
             attrs.update(metadata)

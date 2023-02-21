@@ -10,7 +10,7 @@ import torch
 import mridc.collections.common.parts.fft as fft
 import mridc.collections.common.parts.utils as utils
 import mridc.collections.reconstruction.data.subsample as subsample
-
+import time
 __all__ = ["MRIDataTransforms"]
 
 
@@ -38,6 +38,7 @@ class MRIDataTransforms:
         kspace_crop: bool = False,
         crop_before_masking: bool = True,
         kspace_zero_filling_size: Optional[Tuple] = None,
+        self_supervising_masks: bool = False,
         normalize_inputs: bool = False,
         fft_centered: bool = True,
         fft_normalization: str = "ortho",
@@ -89,6 +90,8 @@ class MRIDataTransforms:
             Whether to crop before masking.
         kspace_zero_filling_size : Optional[Tuple]
             The zero filling size.
+        self_supervising_masks: bool
+            Toggle the flag to enable loading SSDU masks.
         normalize_inputs : bool
             Whether to normalize the inputs.
         fft_centered : bool
@@ -115,6 +118,7 @@ class MRIDataTransforms:
         self.kspace_crop = kspace_crop
         self.crop_before_masking = crop_before_masking
         self.kspace_zero_filling_size = kspace_zero_filling_size
+        self.self_supervising_masks = self_supervising_masks
         self.normalize_inputs = normalize_inputs
         self.fft_centered = fft_centered
         self.fft_normalization = fft_normalization
@@ -156,7 +160,7 @@ class MRIDataTransforms:
         self,
         kspace: np.ndarray,
         sensitivity_map: np.ndarray,
-        mask: np.ndarray,
+        mask: Union[Optional[List], np.ndarray],
         eta: np.ndarray,
         target: np.ndarray,
         attrs: Dict,
@@ -306,8 +310,9 @@ class MRIDataTransforms:
                 w = w if w <= crop_size[1] else crop_size[1]
 
             self.crop_size = (int(h), int(w))
-
             target = utils.center_crop(target, self.crop_size)
+            # print('self.crop_size', self.crop_size)
+            # print('target.shape:', target.shape)
             if sensitivity_map is not None and sensitivity_map.size != 0:
                 sensitivity_map = (
                     fft.ifft2(
@@ -370,9 +375,15 @@ class MRIDataTransforms:
             )
 
         if not utils.is_none(mask):
+            if self.self_supervising_masks:
+                mask, trn_mask, loss_mask = mask[0], mask[1], mask[2]
+
             for _mask in mask:
                 if list(_mask.shape) == [kspace.shape[-3], kspace.shape[-2]]:
                     mask = torch.from_numpy(_mask).unsqueeze(0).unsqueeze(-1)
+                    if self.self_supervising_masks:
+                        trn_mask = torch.from_numpy(trn_mask).unsqueeze(0).unsqueeze(-1)
+                        loss_mask = torch.from_numpy(loss_mask).unsqueeze(0).unsqueeze(-1)
                     break
 
             padding = (acq_start, acq_end)
@@ -384,13 +395,33 @@ class MRIDataTransforms:
             if isinstance(mask, np.ndarray):
                 mask = torch.from_numpy(mask).unsqueeze(0).unsqueeze(-1)
 
+            if self.self_supervising_masks:
+                if isinstance(trn_mask, np.ndarray):
+                    trn_mask = torch.from_numpy(trn_mask).unsqueeze(0).unsqueeze(-1)
+                if isinstance(loss_mask, np.ndarray):
+                    loss_mask = torch.from_numpy(loss_mask).unsqueeze(0).unsqueeze(-1)
+
             if self.shift_mask:
                 mask = torch.fft.fftshift(mask, dim=(self.spatial_dims[0] - 1, self.spatial_dims[1] - 1))
 
             if self.crop_size is not None and self.crop_size not in ("", "None") and self.crop_before_masking:
                 mask = utils.complex_center_crop(mask, self.crop_size)
 
-            masked_kspace = kspace * mask + 0.0  # the + 0.0 removes the sign of the zeros
+                if self.self_supervising_masks:
+                    trn_mask = utils.complex_center_crop(trn_mask, self.crop_size)
+                    loss_mask = utils.complex_center_crop(loss_mask, self.crop_size)
+
+            # print('kspace.shape',kspace.shape)
+            # print('mask.shape',mask.shape)
+            # print('trn_mask.shape',trn_mask.shape)
+            # print('loss_mask.shape', loss_mask.shape)
+            # time.sleep(50)
+
+            if self.self_supervising_masks:
+                masked_kspace = kspace * trn_mask + 0.0  # the + 0.0 removes the sign of the zeros
+                mask = trn_mask
+            else:
+                masked_kspace = kspace * mask + 0.0  # the + 0.0 removes the sign of the zeros
 
             acc = 1
         elif utils.is_none(self.mask_func):
@@ -523,6 +554,10 @@ class MRIDataTransforms:
 
             mask = utils.center_crop(mask.squeeze(-1), self.crop_size).unsqueeze(-1)
 
+            if self.self_supervising_masks:
+                trn_mask = utils.center_crop(trn_mask.squeeze(-1), self.crop_size).unsqueeze(-1)
+                loss_mask = utils.center_crop(loss_mask.squeeze(-1), self.crop_size).unsqueeze(-1)
+
         # Normalize by the max value.
         if self.normalize_inputs:
             if isinstance(self.mask_func, list):
@@ -616,7 +651,7 @@ class MRIDataTransforms:
 
                 target = target / torch.max(torch.abs(target))
 
-        return kspace, masked_kspace, sensitivity_map, mask, eta, target, fname, slice_idx, acc
+        return kspace, masked_kspace, sensitivity_map, [mask, loss_mask], eta, target, fname, slice_idx, acc
 
 
 class NoisePreWhitening:

@@ -1,6 +1,6 @@
 # coding=utf-8
 __author__ = "Dimitrios Karkalousos"
-
+import time
 import os
 from abc import ABC
 from collections import defaultdict
@@ -78,6 +78,10 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
 
         self.coil_combination_method = cfg_dict.get("coil_combination_method")
 
+        self.regularization_factor = cfg_dict.get("regularization_factor")
+    
+        self.self_supervising_masks = cfg_dict.get("self_supervising_masks")
+
         # Initialize the sensitivity network if use_sens_net is True
         self.use_sens_net = cfg_dict.get("use_sens_net")
         if self.use_sens_net:
@@ -152,8 +156,7 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
 
         return loss_fn(target, pred)
 
-    @staticmethod
-    def process_inputs(y, mask, init_pred):
+    def process_inputs(self, y, mask, init_pred):
         """
         Processes the inputs to the method.
 
@@ -179,7 +182,12 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
         if isinstance(y, list):
             r = np.random.randint(len(y))
             y = y[r]
+            if self.self_supervising_masks:
+                mask, loss_mask = mask[0], mask[1]
             mask = mask[r]
+            if self.self_supervising_masks:
+                loss_mask = loss_mask[r]
+                mask = [mask, loss_mask]
             init_pred = init_pred[r]
         else:
             r = 0
@@ -227,9 +235,13 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
         'log': log,
             dict, shape [1]
         """
-        kspace, y, sensitivity_maps, mask, init_pred, target, _, _, acc = batch
-
+        kspace, y, sensitivity_maps, mask, init_pred, target, fname, slice_num, acc = batch
+        
         y, mask, init_pred, r = self.process_inputs(y, mask, init_pred)
+        
+        if self.self_supervising_masks:
+            mask, loss_mask = mask[0], mask[1]
+            target = torch.view_as_complex(kspace * loss_mask)
 
         if self.use_sens_net:
             sensitivity_maps = self.sens_net(kspace, mask)
@@ -242,9 +254,35 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
             except StopIteration:
                 pass
 
+            if self.self_supervising_masks:
+                # Cascades
+                if isinstance(preds, list):
+                    # Time-steps
+                    if isinstance(preds, list):
+                        first_preds = []
+                        second_preds = []
+                        for pred in preds:
+                            for x in pred:
+                                x = x.unsqueeze(self.coil_dim)
+                                x = torch.view_as_real(x) * sensitivity_maps
+                                x = fft.fft2(x * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+                                x = torch.view_as_complex(x)
+                                first_preds.append(x)
+                            second_preds.append(first_preds)
+                        preds = second_preds
+                    else:
+                        preds = [fft.fft2(torch.view_as_real(x.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims) for x in preds]
+            else:
+                preds = fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+
             train_loss = sum(self.process_loss(target, preds, _loss_fn=self.train_loss_fn, mask=None))
+            train_loss = train_loss * self.regularization_factor
         else:
+            if self.self_supervising_masks:
+                preds = fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+
             train_loss = self.process_loss(target, preds, _loss_fn=self.train_loss_fn, mask=None)
+            train_loss = train_loss * self.regularization_factor
 
         acc = r if r != 0 else acc
         tensorboard_logs = {
@@ -293,9 +331,14 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
         'log': log,
             dict, shape [1]
         """
-        kspace, y, sensitivity_maps, mask, init_pred, target, fname, slice_num, _ = batch
-
+        kspace, y, sensitivity_maps, mask, init_pred, target, fname, slice_num, acc = batch
+        
         y, mask, init_pred, r = self.process_inputs(y, mask, init_pred)
+        
+        if self.self_supervising_masks:
+            mask, loss_mask = mask[0], mask[1]
+            _target = target.clone()
+            target = torch.view_as_complex(kspace * loss_mask)
 
         if self.use_sens_net:
             sensitivity_maps = self.sens_net(kspace, mask)
@@ -307,9 +350,44 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
                 preds = next(preds)
             except StopIteration:
                 pass
+
+            if self.self_supervising_masks:
+                _preds = preds
+
+                # Cascades
+                if isinstance(preds, list):
+                    # Time-steps
+                    if isinstance(preds, list):
+                        first_preds = []
+                        second_preds = []
+                        for pred in preds:
+                            for x in pred:
+                                x = x.unsqueeze(self.coil_dim)
+                                x = torch.view_as_real(x) * sensitivity_maps
+                                x = fft.fft2(x * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+                                x = torch.view_as_complex(x)
+                                first_preds.append(x)
+                            second_preds.append(first_preds)
+                        preds = second_preds
+                    else:
+                        preds = [fft.fft2(torch.view_as_real(x.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims) for x in preds]
+            else:
+                preds = fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+
             val_loss = sum(self.process_loss(target, preds, _loss_fn=self.val_loss_fn, mask=None))
+            val_loss = val_loss * self.regularization_factor
         else:
+            if self.self_supervising_masks:
+                _preds = preds
+                preds = fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+
             val_loss = self.process_loss(target, preds, _loss_fn=self.val_loss_fn, mask=None)
+            val_loss = val_loss * self.regularization_factor
+
+        if self.self_supervising_masks:
+            target = _target
+            preds = _preds
+            del _target, _preds
 
         # Cascades
         if isinstance(preds, list):
@@ -385,9 +463,12 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
         pred: Predicted data.
             torch.Tensor, shape [batch_size, n_x, n_y, 2]
         """
-        kspace, y, sensitivity_maps, mask, init_pred, target, fname, slice_num, _ = batch
-
+        kspace, y, sensitivity_maps, mask, init_pred, target, fname, slice_num, acc = batch
+        
         y, mask, init_pred, r = self.process_inputs(y, mask, init_pred)
+        
+        if self.self_supervising_masks:
+            mask, loss_mask = mask[0], mask[1]
 
         if self.use_sens_net:
             sensitivity_maps = self.sens_net(kspace, mask)
@@ -407,7 +488,7 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
         # Time-steps
         if isinstance(preds, list):
             preds = preds[-1]
-
+        
         slice_num = int(slice_num)
         name = str(fname[0])  # type: ignore
         key = f"{name}_images_idx_{slice_num}"  # type: ignore
@@ -687,6 +768,7 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
                 crop_size=cfg.get("crop_size"),
                 crop_before_masking=cfg.get("crop_before_masking"),
                 kspace_zero_filling_size=cfg.get("kspace_zero_filling_size"),
+                self_supervising_masks=cfg.get("self_supervising_masks", False),
                 fft_centered=cfg.get("fft_centered"),
                 fft_normalization=cfg.get("fft_normalization"),
                 max_norm=cfg.get("max_norm"),
@@ -696,6 +778,7 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
             ),
             sample_rate=cfg.get("sample_rate"),
             consecutive_slices=cfg.get("consecutive_slices"),
+            self_supervising_masks=cfg.get("self_supervising_masks", False)
         )
         if cfg.shuffle:
             sampler = torch.utils.data.RandomSampler(dataset)

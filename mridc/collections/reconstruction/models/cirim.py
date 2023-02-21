@@ -98,6 +98,8 @@ class CIRIM(base_models.BaseMRIReconstructionModel, ABC):
             self.train_loss_fn = L1Loss()
         elif cfg_dict.get("train_loss_fn") == "mse":
             self.train_loss_fn = torch.nn.MSELoss()
+        elif cfg_dict.get("train_loss_fn") == "l1+mse_normalized":
+            self.train_loss_fn = lambda x, y: L1Loss()(x, y)/torch.sum(torch.abs(x)) + torch.nn.MSELoss()(x,y)/torch.sum(torch.sqrt(x))
         else:
             raise ValueError("Unknown loss function: {}".format(cfg_dict.get("train_loss_fn")))
         if cfg_dict.get("val_loss_fn") == "ssim":
@@ -106,6 +108,8 @@ class CIRIM(base_models.BaseMRIReconstructionModel, ABC):
             self.val_loss_fn = L1Loss()
         elif cfg_dict.get("val_loss_fn") == "mse":
             self.val_loss_fn = torch.nn.MSELoss()
+        elif cfg_dict.get("val_loss_fn") == "l1+mse_normalized":
+            self.val_loss_fn =  lambda x, y: L1Loss()(x, y)/torch.sum(torch.abs(x)) + torch.nn.MSELoss()(x,y)/torch.sum(torch.sqrt(x))
         else:
             raise ValueError("Unknown loss function: {}".format(cfg_dict.get("val_loss_fn")))
 
