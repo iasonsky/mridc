@@ -5,9 +5,7 @@ mode: train
 model:
   model_name: RESNET
   channels: 64
-  pooling_layers: 2
-  padding_size: 11
-  normalize: true
+  unrolled_iterations: 10
   dimensionality: 2
   train_loss_fn: l1
   val_loss_fn: l1
@@ -60,10 +58,10 @@ model:
     half_scan_percentage: 0.0
     remask: false
     crop_size: [320, 368]
-    kspace_crop: true
+    kspace_crop: false
     crop_before_masking: true
     kspace_zero_filling_size: None
-    normalize_inputs: false
+    normalize_inputs: true
     max_norm: true
     fft_centered: true
     fft_normalization: ortho
@@ -105,14 +103,14 @@ model:
         - 0.7
       scale: 0.02
       shift_mask: true
-      use_seed: true
+      use_seed: false
     half_scan_percentage: 0.0
     remask: false
     crop_size: [320, 368]
-    kspace_crop: true
+    kspace_crop: false
     crop_before_masking: true
     kspace_zero_filling_size: None
-    normalize_inputs: false
+    normalize_inputs: true
     max_norm: true
     fft_centered: true
     fft_normalization: ortho
@@ -120,7 +118,7 @@ model:
       - -2
       - -1
     coil_dim: 1
-    use_seed: true
+    use_seed: false
     shuffle: false
     num_workers: 8
     drop_last: false
@@ -128,7 +126,7 @@ model:
 
   optim:
     name: adam
-    lr: 0.0005
+    lr: 1e-5
     betas:
       - 0.9
       - 0.98
@@ -145,11 +143,11 @@ trainer:
   devices: 1
   num_nodes: 1
   max_epochs: 100
-  precision: 32
+  precision: 16
   enable_checkpointing: false
   logger: false
   log_every_n_steps: 1
-  check_val_every_n_epoch: 100
+  check_val_every_n_epoch: -1
   max_steps: -1
 
 exp_manager:

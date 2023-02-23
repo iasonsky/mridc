@@ -12,8 +12,9 @@ import mridc.collections.common.losses.ssim as losses
 import mridc.collections.common.parts.fft as fft
 import mridc.collections.common.parts.utils as utils
 import mridc.collections.reconstruction.models.base as base_models
-import mridc.collections.reconstruction.models.resnet_base.resnet_block as resnet_block
+# import mridc.collections.reconstruction.models.resnet_base.resnet_block as resnet_block
 import mridc.core.classes.common as common_classes
+from mridc.collections.reconstruction.models.resnet_base.resnet_block import BasicBlock, ResNetwork
 
 __all__ = ["ResNet"]
 
@@ -44,8 +45,11 @@ class ResNet(base_models.BaseMRIReconstructionModel, ABC):
         
         # self.basic_block = resnet_block.BasicBlock(64,64)
         # self.resnet = resnet_block.ResNet(self.basic_block)
-        self.model = resnet_block.resnet_ssdu()
+        self.model = ResNetwork(block=BasicBlock, nb_res_blocks=6)
         self.coil_combination_method = cfg_dict.get("coil_combination_method")
+
+        self.unrolled_iterations = cfg_dict.get("unrolled_iterations", 10)
+        self.mu = torch.Tensor([0.05])
 
         # initialize weights if not using pretrained unet
         # TODO if not cfg_dict.get("pretrained", False):
@@ -69,6 +73,44 @@ class ResNet(base_models.BaseMRIReconstructionModel, ABC):
 
         self.accumulate_estimates = False
 
+    def sens_expand(self, x: torch.Tensor, sens_maps: torch.Tensor) -> torch.Tensor:
+        """
+        Expand the sensitivity maps to the same size as the input.
+
+        Parameters
+        ----------
+        x: Input data.
+        sens_maps: Coil Sensitivity maps.
+
+        Returns
+        -------
+        SENSE reconstruction expanded to the same size as the input sens_maps.
+        """
+        return fft.fft2(
+            utils.complex_mul(x, sens_maps),
+            centered=self.fft_centered,
+            normalization=self.fft_normalization,
+            spatial_dims=self.spatial_dims,
+        )
+
+    def sens_reduce(self, x: torch.Tensor, sens_maps: torch.Tensor) -> torch.Tensor:
+        """
+        Reduce the sensitivity maps.
+
+        Parameters
+        ----------
+        x: Input data.
+        sens_maps: Coil Sensitivity maps.
+
+        Returns
+        -------
+        SENSE coil-combined reconstruction.
+        """
+        x = fft.ifft2(
+            x, centered=self.fft_centered, normalization=self.fft_normalization, spatial_dims=self.spatial_dims
+        )
+        return utils.complex_mul(x, utils.complex_conj(sens_maps)).sum(dim=self.coil_dim, keepdim=True)
+    
     @common_classes.typecheck()
     def forward(
         self,
@@ -100,6 +142,10 @@ class ResNet(base_models.BaseMRIReconstructionModel, ABC):
              If self.accumulate_loss is True, returns a list of all intermediate estimates.
              If False, returns the final estimate.
         """
+        self.mu = self.mu.clone().to(y)
+        zero = torch.zeros(1, 1, 1, 1, 1).to(y)
+        pred = y.clone()
+
         eta = torch.view_as_complex(
             utils.coil_combination(
                 fft.ifft2(
@@ -110,7 +156,9 @@ class ResNet(base_models.BaseMRIReconstructionModel, ABC):
                 dim=self.coil_dim,
             )
         )
-        _, eta = utils.center_crop_to_smallest(target, eta)
-        return torch.view_as_complex(self.model(torch.view_as_real(eta.unsqueeze(self.coil_dim)))).squeeze(
-            self.coil_dim
-        )
+        eta = torch.view_as_real(eta).unsqueeze(self.coil_dim)
+        for _ in range(self.unrolled_iterations):
+            eta = self.model(eta)
+            # eta = self.sens_expand(eta, sensitivity_maps) * mask
+            # eta = self.sens_reduce(eta, sensitivity_maps)
+        return torch.view_as_complex(eta).squeeze(self.coil_dim)

@@ -28,13 +28,14 @@ class BasicBlock(nn.Module):
             identity = self.downsample(x)
 
         out += identity
-        out = self.relu(out)
+        # out = self.relu(out)
 
         return out
 
-class ResNet(nn.Module):
 
-    def __init__(self, block, nb_res_blocks=6):
+class ResNetwork(nn.Module):
+
+    def __init__(self, block, nb_res_blocks=15):
         super().__init__()
         
         self.inplanes = 64
@@ -110,6 +111,7 @@ class ResNet(nn.Module):
             x = self.chan_complex_to_last_dim(x)
 
         return x
+
 
 def resnet_ssdu():
     model = ResNet(BasicBlock)

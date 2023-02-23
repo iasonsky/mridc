@@ -130,3 +130,6 @@ dmypy.json
 # tensorboard files
 mridc_experiments/
 project/example/reconstructions/
+
+# images
+*.png
