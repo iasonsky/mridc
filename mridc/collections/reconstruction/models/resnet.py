@@ -12,11 +12,10 @@ import mridc.collections.common.losses.ssim as losses
 import mridc.collections.common.parts.fft as fft
 import mridc.collections.common.parts.utils as utils
 import mridc.collections.reconstruction.models.base as base_models
-import mridc.collections.reconstruction.models.unet_base.unet_block as unet_block
-import mridc.collections.reconstruction.models.resnet.resnet_block as resnet_block
+import mridc.collections.reconstruction.models.resnet_base.resnet_block as resnet_block
 import mridc.core.classes.common as common_classes
 
-__all__ = ["UNet"]
+__all__ = ["ResNet"]
 
 
 class ResNet(base_models.BaseMRIReconstructionModel, ABC):
@@ -43,15 +42,9 @@ class ResNet(base_models.BaseMRIReconstructionModel, ABC):
         self.spatial_dims = cfg_dict.get("spatial_dims")
         self.coil_dim = cfg_dict.get("coil_dim")
         
-        self.resnet = resnet_block.ResNet()
-        
-        self.unet = unet_block.NormUnet(
-            chans=cfg_dict.get("channels"),
-            num_pools=cfg_dict.get("pooling_layers"),
-            padding_size=cfg_dict.get("padding_size"),
-            normalize=cfg_dict.get("normalize"),
-        )
-
+        # self.basic_block = resnet_block.BasicBlock(64,64)
+        # self.resnet = resnet_block.ResNet(self.basic_block)
+        self.model = resnet_block.resnet_ssdu()
         self.coil_combination_method = cfg_dict.get("coil_combination_method")
 
         # initialize weights if not using pretrained unet
@@ -118,6 +111,6 @@ class ResNet(base_models.BaseMRIReconstructionModel, ABC):
             )
         )
         _, eta = utils.center_crop_to_smallest(target, eta)
-        return torch.view_as_complex(self.unet(torch.view_as_real(eta.unsqueeze(self.coil_dim)))).squeeze(
+        return torch.view_as_complex(self.model(torch.view_as_real(eta.unsqueeze(self.coil_dim)))).squeeze(
             self.coil_dim
         )

@@ -271,15 +271,15 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
                             second_preds.append(first_preds)
                         preds = second_preds
                     else:
-                        preds = [fft.fft2(torch.view_as_real(x.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims) for x in preds]
+                        preds = [torch.view_as_complex(fft.fft2(torch.view_as_real(x.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)) for x in preds]
             else:
-                preds = fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+                preds = torch.view_as_complex(fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims))
 
             train_loss = sum(self.process_loss(target, preds, _loss_fn=self.train_loss_fn, mask=None))
             train_loss = train_loss * self.regularization_factor
         else:
             if self.self_supervising_masks:
-                preds = fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+                preds = torch.view_as_complex(fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims))
 
             train_loss = self.process_loss(target, preds, _loss_fn=self.train_loss_fn, mask=None)
             train_loss = train_loss * self.regularization_factor
@@ -370,16 +370,16 @@ class BaseMRIReconstructionModel(modelPT.ModelPT, ABC):
                             second_preds.append(first_preds)
                         preds = second_preds
                     else:
-                        preds = [fft.fft2(torch.view_as_real(x.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims) for x in preds]
+                        preds = [torch.view_as_complex(fft.fft2(torch.view_as_real(x.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)) for x in preds]
             else:
-                preds = fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+                preds = torch.view_as_complex(fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims))
 
             val_loss = sum(self.process_loss(target, preds, _loss_fn=self.val_loss_fn, mask=None))
             val_loss = val_loss * self.regularization_factor
         else:
             if self.self_supervising_masks:
                 _preds = preds
-                preds = fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims)
+                preds = torch.view_as_complex(fft.fft2(torch.view_as_real(preds.unsqueeze(self.coil_dim)) * sensitivity_maps, self.fft_centered, self.fft_normalization, self.spatial_dims))
 
             val_loss = self.process_loss(target, preds, _loss_fn=self.val_loss_fn, mask=None)
             val_loss = val_loss * self.regularization_factor

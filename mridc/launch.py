@@ -22,6 +22,7 @@ from mridc.collections.reconstruction.models.vn import VarNet
 from mridc.collections.reconstruction.models.vsnet import VSNet
 from mridc.collections.reconstruction.models.xpdnet import XPDNet
 from mridc.collections.reconstruction.models.zf import ZF
+from mridc.collections.reconstruction.models.resnet import ResNet
 from mridc.collections.segmentation.models.attention_unet import SegmentationAttentionUNet
 from mridc.collections.segmentation.models.dynunet import DYNUNet
 from mridc.collections.segmentation.models.idslr import IDSLR
@@ -117,6 +118,8 @@ def main(cfg: DictConfig) -> None:
         model = XPDNet(cfg.model, trainer=trainer)
     elif model_name == "ZF":
         model = ZF(cfg.model, trainer=trainer)
+    elif model_name == "RESNET":
+        model = ResNet(cfg.model, trainer=trainer)
     else:
         raise NotImplementedError(
             f"{model_name} is not implemented in MRIDC. You can use one of the following methods: "
